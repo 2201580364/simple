@@ -8,13 +8,18 @@ export default class SnakeGame {
    * Creates a new SnakeGame instance.
    * @param {number} gridWidth - Width of the game grid in cells.
    * @param {number} gridHeight - Height of the game grid in cells.
-   * @throws {Error} If gridWidth or gridHeight is not a finite positive number.
+   * @throws {Error} If gridWidth or gridHeight is not a finite positive number,
+   *                 or if the grid is too small (less than 5x5).
    */
   constructor(gridWidth, gridHeight) {
     // QA fix: reject NaN, Infinity, and non-positive values
     if (!Number.isFinite(gridWidth) || gridWidth <= 0 ||
         !Number.isFinite(gridHeight) || gridHeight <= 0) {
       throw new Error('gridWidth and gridHeight must be finite positive numbers');
+    }
+    // QA fix: ensure grid is large enough to contain the initial snake (length 3)
+    if (gridWidth < 5 || gridHeight < 5) {
+      throw new Error('Grid must be at least 5x5 to fit the initial snake');
     }
     this.gridWidth = Math.floor(gridWidth);
     this.gridHeight = Math.floor(gridHeight);
@@ -105,6 +110,8 @@ export default class SnakeGame {
     if (ateFood) {
       this.score += 1;
       this.food = this._generateFood();
+      // After food generation the grid may be full and game over may have been set
+      return { gameOver: this.gameOver, ateFood: true };
     } else {
       this.snake.pop();
     }
@@ -139,6 +146,8 @@ export default class SnakeGame {
 
   /**
    * Generates a food item at a random empty cell.
+   * If no empty cell exists (snake fills the grid), the game is set to over
+   * and the current food position (if any) is returned.
    * @returns {{x: number, y: number}}
    * @private
    */
@@ -159,7 +168,9 @@ export default class SnakeGame {
         }
       }
     }
-    // No empty cell (snake fills the whole grid) – re-use current food position
-    return { ...this.food };
+    // No empty cell – the snake fills the entire grid. End the game.
+    this.gameOver = true;
+    // Return the previous food position to satisfy the contract (it will not be used for rendering once game over)
+    return this.food ? { x: this.food.x, y: this.food.y } : { x: 0, y: 0 };
   }
 }
