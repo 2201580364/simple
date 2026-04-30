@@ -1,176 +1,150 @@
 /**
- * SnakeGame class - Core game logic for the Snake game.
- * Manages the snake movement, food generation, collision detection,
- * score, and game-over state.
+ * @class SnakeGame
+ * @description Manages the core logic of the snake game: movement, food, collisions, score, and game state.
  */
-export default class SnakeGame {
+export class SnakeGame {
   /**
-   * Creates a new SnakeGame instance.
-   * @param {number} gridWidth - Width of the game grid in cells.
-   * @param {number} gridHeight - Height of the game grid in cells.
-   * @throws {Error} If gridWidth or gridHeight is not a finite positive number,
-   *                 or if the grid is too small (less than 5x5).
+   * @param {number} gridWidth - Number of cells horizontally
+   * @param {number} gridHeight - Number of cells vertically
    */
   constructor(gridWidth, gridHeight) {
-    // QA fix: reject NaN, Infinity, and non-positive values
-    if (!Number.isFinite(gridWidth) || gridWidth <= 0 ||
-        !Number.isFinite(gridHeight) || gridHeight <= 0) {
-      throw new Error('gridWidth and gridHeight must be finite positive numbers');
-    }
-    // QA fix: ensure grid is large enough to contain the initial snake (length 3)
-    if (gridWidth < 5 || gridHeight < 5) {
-      throw new Error('Grid must be at least 5x5 to fit the initial snake');
+    if (typeof gridWidth !== 'number' || typeof gridHeight !== 'number' ||
+        gridWidth <= 0 || gridHeight <= 0) {
+      throw new Error('Invalid grid dimensions: must be positive numbers.');
     }
     this.gridWidth = Math.floor(gridWidth);
     this.gridHeight = Math.floor(gridHeight);
-    this.direction = 'right';
-    this.nextDirection = 'right';
     this.snake = [];
     this.food = null;
-    this.score = 0;
-    this.gameOver = false;
-  }
-
-  /**
-   * Initializes or resets the game state.
-   */
-  init() {
-    const startX = Math.floor(this.gridWidth / 2);
-    const startY = Math.floor(this.gridHeight / 2);
-    // Initial snake: head at (startX, startY), body extends to the left
-    this.snake = [
-      { x: startX, y: startY },
-      { x: startX - 1, y: startY },
-      { x: startX - 2, y: startY }
-    ];
     this.direction = 'right';
     this.nextDirection = 'right';
     this.score = 0;
     this.gameOver = false;
-    this.food = this._generateFood();
   }
 
   /**
-   * Sets the next direction for the snake.
-   * Invalid directions (including reversal of current direction) are ignored.
-   * @param {string} direction - One of 'up', 'down', 'left', 'right'.
+   * Initialize or reset the game state to start a new game.
+   */
+  init() {
+    // Determine a safe starting position, ensuring the initial snake fits on the grid.
+    const startX = Math.min(this.gridWidth - 1, Math.floor(this.gridWidth / 2));
+    const startY = Math.min(this.gridHeight - 1, Math.floor(this.gridHeight / 2));
+    const length = Math.min(3, this.gridWidth);
+
+    this.snake = [];
+    for (let i = 0; i < length; i++) {
+      this.snake.push({ x: startX - i, y: startY });
+    }
+
+    this.direction = 'right';
+    this.nextDirection = 'right';
+    this.score = 0;
+    this.gameOver = false;
+    this._placeFood();
+  }
+
+  /** @private */
+  _placeFood() {
+    const maxAttempts = this.gridWidth * this.gridHeight;
+    for (let i = 0; i < maxAttempts; i++) {
+      const x = Math.floor(Math.random() * this.gridWidth);
+      const y = Math.floor(Math.random() * this.gridHeight);
+      if (!this.snake.some(segment => segment.x === x && segment.y === y)) {
+        this.food = { x, y };
+        return;
+      }
+    }
+    // Grid is completely covered by the snake – practically unreachable.
+    this.food = null;
+  }
+
+  /**
+   * Set the next direction for the snake.
+   * Invalid or opposite directions are silently ignored.
+   * @param {string} direction - 'up', 'down', 'left', or 'right'
    */
   setDirection(direction) {
-    const opposites = {
-      up: 'down',
-      down: 'up',
-      left: 'right',
-      right: 'left'
-    };
-    // QA fix: prevent reversal based on current direction (not last move)
-    if (direction in opposites && opposites[direction] !== this.direction) {
-      this.nextDirection = direction;
-    }
+    const validDirs = ['up', 'down', 'left', 'right'];
+    if (!direction || !validDirs.includes(direction)) return;
+
+    // Prevent reversal
+    const opposites = { up: 'down', down: 'up', left: 'right', right: 'left' };
+    if (opposites[direction] === this.direction) return;
+
+    this.nextDirection = direction;
   }
 
   /**
-   * Advances the game by one frame.
-   * @returns {{ gameOver: boolean, ateFood: boolean }}
+   * Advance the game state by one step.
+   * @returns {{gameOver: boolean, ateFood: boolean}}
    */
   update() {
     if (this.gameOver) {
       return { gameOver: true, ateFood: false };
     }
 
-    // Apply the pending direction
+    // Apply the buffered direction
     this.direction = this.nextDirection;
 
     const head = this.snake[0];
     const newHead = { x: head.x, y: head.y };
-
     switch (this.direction) {
       case 'up':    newHead.y -= 1; break;
       case 'down':  newHead.y += 1; break;
       case 'left':  newHead.x -= 1; break;
       case 'right': newHead.x += 1; break;
+      default: return { gameOver: false, ateFood: false };
     }
 
-    // Check wall collision
+    // Wall collision
     if (newHead.x < 0 || newHead.x >= this.gridWidth ||
         newHead.y < 0 || newHead.y >= this.gridHeight) {
       this.gameOver = true;
       return { gameOver: true, ateFood: false };
     }
 
-    // Check self-collision (new head cannot overlap any part of the snake)
-    if (this.snake.some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
-      this.gameOver = true;
-      return { gameOver: true, ateFood: false };
-    }
-
-    // Check if food is eaten
-    const ateFood = (newHead.x === this.food.x && newHead.y === this.food.y);
+    // Check food consumption before moving the tail
+    const ateFood = this.food ? (newHead.x === this.food.x && newHead.y === this.food.y) : false;
 
     this.snake.unshift(newHead);
+
     if (ateFood) {
       this.score += 1;
-      this.food = this._generateFood();
-      // After food generation the grid may be full and game over may have been set
-      return { gameOver: this.gameOver, ateFood: true };
+      this._placeFood();
+      // Tail is kept, snake grows.
     } else {
       this.snake.pop();
+    }
+
+    // Self-collision (head vs body)
+    const currentHead = this.snake[0];
+    for (let i = 1; i < this.snake.length; i++) {
+      if (this.snake[i].x === currentHead.x && this.snake[i].y === currentHead.y) {
+        this.gameOver = true;
+        return { gameOver: true, ateFood };
+      }
     }
 
     return { gameOver: false, ateFood };
   }
 
   /**
-   * Returns the current game state.
-   * @returns {{
-   *   snake: Array<{x: number, y: number}>,
-   *   food: {x: number, y: number},
-   *   score: number,
-   *   gameOver: boolean
-   * }}
+   * Get the current game state.
+   * @returns {{snake: Array<{x: number, y: number}>, food: {x: number, y: number}, score: number, gameOver: boolean}}
    */
   getState() {
     return {
-      snake: this.snake.map(segment => ({ ...segment })),
-      food: { ...this.food },
+      snake: this.snake.slice(),
+      food: this.food ? { ...this.food } : { x: 0, y: 0 }, // fallback, should never be used
       score: this.score,
       gameOver: this.gameOver
     };
   }
 
   /**
-   * Resets the game to the initial state.
+   * Reset the game to start a new one.
    */
   reset() {
     this.init();
-  }
-
-  /**
-   * Generates a food item at a random empty cell.
-   * If no empty cell exists (snake fills the grid), the game is set to over
-   * and the current food position (if any) is returned.
-   * @returns {{x: number, y: number}}
-   * @private
-   */
-  _generateFood() {
-    // Try random placement up to 100 times
-    for (let attempt = 0; attempt < 100; attempt++) {
-      const x = Math.floor(Math.random() * this.gridWidth);
-      const y = Math.floor(Math.random() * this.gridHeight);
-      if (!this.snake.some(segment => segment.x === x && segment.y === y)) {
-        return { x, y };
-      }
-    }
-    // Fallback: iterate over all cells to find an empty one
-    for (let y = 0; y < this.gridHeight; y++) {
-      for (let x = 0; x < this.gridWidth; x++) {
-        if (!this.snake.some(segment => segment.x === x && segment.y === y)) {
-          return { x, y };
-        }
-      }
-    }
-    // No empty cell – the snake fills the entire grid. End the game.
-    this.gameOver = true;
-    // Return the previous food position to satisfy the contract (it will not be used for rendering once game over)
-    return this.food ? { x: this.food.x, y: this.food.y } : { x: 0, y: 0 };
   }
 }
