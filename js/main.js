@@ -41,42 +41,57 @@ function handleDirectionChange(direction) {
 /**
  * Main game loop tick.
  * Updates game state, renders current frame, and updates UI scores.
- * Stops the loop and shows game-over screen when the game ends.
+ * Stops the loop and shows game-over screen when the game ends,
+ * or on any unexpected error to prevent a broken state.
  */
 function gameLoop() {
   if (!game) return;
 
-  const { gameOver } = game.update();
-  const state = game.getState();
-
-  ui.updateScore(state.score);
-
-  // Update persistent high score
   try {
-    const storedHigh = localStorage.getItem('snakeHighScore');
-    let currentHigh = storedHigh ? parseInt(storedHigh, 10) : 0;
-    if (state.score > currentHigh) {
-      currentHigh = state.score;
-      localStorage.setItem('snakeHighScore', currentHigh.toString());
+    // game.update() returns { gameOver, ateFood }. Only gameOver is required;
+    // ateFood is handled internally by the game state and reserved for future extensions.
+    const { gameOver } = game.update();
+    const state = game.getState();
+
+    ui.updateScore(state.score);
+
+    // Update persistent high score
+    try {
+      const storedHigh = localStorage.getItem('snakeHighScore');
+      let currentHigh = storedHigh ? parseInt(storedHigh, 10) : 0;
+      if (state.score > currentHigh) {
+        currentHigh = state.score;
+        localStorage.setItem('snakeHighScore', currentHigh.toString());
+      }
+      ui.updateHighScore(currentHigh);
+    } catch (e) {
+      // localStorage might be unavailable (e.g., privacy mode); degrade gracefully
+      console.warn('Could not access localStorage for high score:', e);
+      ui.updateHighScore(0);
     }
-    ui.updateHighScore(currentHigh);
-  } catch (e) {
-    // localStorage might be unavailable (e.g., privacy mode); degrade gracefully
-    console.warn('Could not access localStorage for high score:', e);
-    ui.updateHighScore(0);
-  }
 
-  // Render current state on canvas
-  const canvas = document.getElementById('gameCanvas');
-  if (canvas) {
-    const ctx = canvas.getContext('2d');
-    render(ctx, { snake: state.snake, food: state.food }, CELL_SIZE, GRID_WIDTH, GRID_HEIGHT);
-  }
+    // Render current state on canvas
+    const canvas = document.getElementById('gameCanvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      render(ctx, { snake: state.snake, food: state.food }, CELL_SIZE, GRID_WIDTH, GRID_HEIGHT);
+    } else {
+      // Canvas element is missing, stop the game to prevent invisible game-play
+      throw new Error('Canvas element not found during game loop');
+    }
 
-  // Handle game over
-  if (gameOver) {
+    // Handle game over
+    if (gameOver) {
+      stopGame();
+      ui.showGameOver();
+    }
+  } catch (error) {
+    // An unexpected error occurred in the game loop; stop the game to avoid broken state
+    console.error('Game loop error:', error);
     stopGame();
-    ui.showGameOver();
+    if (ui) {
+      ui.showGameOver();
+    }
   }
 }
 
@@ -86,7 +101,7 @@ function gameLoop() {
  * creates fresh game and UI instances, sets initial direction and starts the loop.
  */
 function startGame() {
-  // Validate that all required DOM elements exist (QA fix: check existence)
+  // Validate that all required DOM elements exist
   const requiredIds = ['score', 'highScore', 'gameOver', 'restartButton', 'gameCanvas'];
   for (const id of requiredIds) {
     if (!document.getElementById(id)) {
@@ -95,7 +110,7 @@ function startGame() {
     }
   }
 
-  // Ensure canvas dimensions exactly match the logical grid (QA fix: integer multiple)
+  // Ensure canvas dimensions exactly match the logical grid
   const canvas = document.getElementById('gameCanvas');
   canvas.width = GRID_WIDTH * CELL_SIZE;
   canvas.height = GRID_HEIGHT * CELL_SIZE;
@@ -110,10 +125,23 @@ function startGame() {
     inputCleanup = null;
   }
 
-  // Create a fresh game instance
-  game = new SnakeGame(GRID_WIDTH, GRID_HEIGHT);
-  game.init();
-  game.setDirection('right'); // QA fix: explicitly set initial direction
+  // Reset game instance
+  game = null;
+
+  // Create a fresh game instance with error handling
+  try {
+    game = new SnakeGame(GRID_WIDTH, GRID_HEIGHT);
+    game.init();
+    game.setDirection('right'); // Explicitly set initial direction
+  } catch (error) {
+    console.error('Failed to initialize game:', error);
+    stopGame(); // Ensure no lingering intervals or input listeners
+    if (ui) {
+      // Show the game over screen as a fallback indication of failure
+      ui.showGameOver();
+    }
+    return;
+  }
 
   // Initialize UI (reuse existing instance if available to avoid duplicate event bindings)
   if (!ui) {
