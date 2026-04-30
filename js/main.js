@@ -1,159 +1,153 @@
 /**
- * @fileoverview 游戏主循环模块，整合核心逻辑、渲染、输入和UI。
+ * Game Loop Module
+ * Integrates game core logic, rendering, input handling, and UI.
+ * Implements the main game loop, start/stop control, and game-over handling.
  */
-
 import { SnakeGame } from './game-core.js';
 import { render } from './renderer.js';
 import { setupInput } from './input-handler.js';
 import { UI } from './ui.js';
 
-// 游戏常量
-const GRID_WIDTH = 20;
-const GRID_HEIGHT = 20;
-const CELL_SIZE = 25; // 像素
-const GAME_SPEED = 150; // 每步移动间隔（毫秒）
-
-// 模块私有状态
+// Module-level state
 let game = null;
-let ui = null;
-let loopId = null;
-let inputCleanup = null;
+let gameInterval = null;
+let uiInstance = null;
+let cleanupInput = null;
+let cellSize = 20;
+let gridWidth = 0;
+let gridHeight = 0;
+let canvas = null;
+let highScore = 0;
 
-// 最高分缓存，用于 localStorge 不可用时的降级方案
-let highScoreCache = 0;
+const GAME_SPEED_MS = 150; // game tick interval
 
 /**
- * 安全地从 localStorage 读取最高分，若失败则返回内存中的缓存值。
- * @returns {number}
+ * Handles direction changes from the input module.
+ * @param {string} direction - one of 'up', 'down', 'left', 'right'
  */
-function loadHighScore() {
-  try {
-    const raw = localStorage.getItem('snakeHighScore');
-    const score = raw ? parseInt(raw, 10) : 0;
-    highScoreCache = score; // 同步缓存
-    return score;
-  } catch (e) {
-    // 浏览器隐私模式或存储不可用时，使用内存缓存
-    return highScoreCache;
+function handleDirectionChange(direction) {
+  if (game) {
+    game.setDirection(direction);
   }
 }
 
 /**
- * 安全地将最高分保存到 localStorage，同时更新内存缓存。
- * @param {number} score
+ * Handles the restart button click.
+ * Stops current game (if any) and starts a fresh one.
  */
-function saveHighScore(score) {
-  highScoreCache = score;
-  try {
-    localStorage.setItem('snakeHighScore', score.toString());
-  } catch (e) {
-    // 存储失败时，仅保留内存缓存
+function handleRestart() {
+  stopGame();
+  startGame();
+}
+
+/**
+ * Starts a new game (or restarts).
+ * Sets up canvas, game instance, input, UI and begins the main loop.
+ */
+function startGame() {
+  // 1. Canvas and grid setup
+  canvas = document.getElementById('gameCanvas');
+  if (!canvas) {
+    console.error('Game canvas not found');
+    return;
+  }
+  cellSize = 20; // could be configurable
+  gridWidth = Math.floor(canvas.width / cellSize);
+  gridHeight = Math.floor(canvas.height / cellSize);
+
+  // 2. Clear any existing game loop
+  if (gameInterval) {
+    clearInterval(gameInterval);
+    gameInterval = null;
+  }
+
+  // 3. Clean up previous input bindings
+  if (cleanupInput) {
+    cleanupInput();
+    cleanupInput = null;
+  }
+
+  // 4. Initialize or reset the game core
+  if (!game) {
+    game = new SnakeGame(gridWidth, gridHeight);
+  } else {
+    game.reset();
+  }
+
+  // 5. Set up keyboard input
+  const inputSetup = setupInput(handleDirectionChange);
+  cleanupInput = inputSetup.cleanup;
+
+  // 6. UI singleton – create only once, avoid multiple event listeners
+  if (!uiInstance) {
+    uiInstance = new UI('score', 'highScore', 'gameOver', 'restartButton');
+    uiInstance.setRestartHandler(handleRestart);
+  } else {
+    uiInstance.hideGameOver();
+    uiInstance.updateScore(0);
+  }
+
+  // 7. Initial render to show empty grid
+  const ctx = canvas.getContext('2d');
+  render(ctx, game.getState(), cellSize, gridWidth, gridHeight);
+
+  // 8. Start the game loop
+  gameInterval = setInterval(gameLoop, GAME_SPEED_MS);
+}
+
+/**
+ * Stops the game loop and releases resources.
+ */
+function stopGame() {
+  if (gameInterval) {
+    clearInterval(gameInterval);
+    gameInterval = null;
+  }
+  if (cleanupInput) {
+    cleanupInput();
+    cleanupInput = null;
   }
 }
 
 /**
- * 游戏主循环，定期更新状态并重新绘制画布。
+ * Main game loop tick.
+ * Updates game state, renders to canvas, updates UI, and handles game over.
  */
-export function gameLoop() {
-  if (!game) return;
-
-  // 更新游戏逻辑
-  game.update();
-  const state = game.getState();
-
-  // 渲染
+function gameLoop() {
+  // Defensive check: if canvas is removed, stop the game safely
   const canvas = document.getElementById('gameCanvas');
   if (!canvas) {
-    console.error('Canvas element #gameCanvas not found');
+    stopGame();
     return;
   }
+
   const ctx = canvas.getContext('2d');
-  render(
-    ctx,
-    {
-      snake: state.snake,
-      food: state.food
-    },
-    CELL_SIZE,
-    GRID_WIDTH,
-    GRID_HEIGHT
-  );
 
-  // 更新得分
-  if (ui) {
-    ui.updateScore(state.score);
+  // Update game logic
+  const result = game.update();
+
+  // Retrieve current state after update
+  const state = game.getState();
+
+  // Render the visual representation
+  render(ctx, state, cellSize, gridWidth, gridHeight);
+
+  // Update UI scores
+  if (uiInstance) {
+    uiInstance.updateScore(state.score);
+    if (state.score > highScore) {
+      highScore = state.score;
+      uiInstance.updateHighScore(highScore);
+    }
   }
 
-  // 检查游戏结束
-  if (state.gameOver) {
+  // Handle game over condition
+  if (result.gameOver) {
     stopGame();
-    if (ui) {
-      ui.showGameOver();
-      // 更新最高分（使用安全读写）
-      const currentHigh = loadHighScore();
-      if (state.score > currentHigh) {
-        saveHighScore(state.score);
-        ui.updateHighScore(state.score);
-      }
+    if (uiInstance) {
+      uiInstance.showGameOver();
     }
   }
 }
 
-/**
- * 启动新游戏，初始化各模块并开始循环。
- */
-export function startGame() {
-  // 确保先停止之前正在进行的游戏
-  if (loopId !== null) {
-    stopGame();
-  }
-
-  // 初始化游戏核心
-  game = new SnakeGame(GRID_WIDTH, GRID_HEIGHT);
-  game.init();
-
-  // 设置画布尺寸
-  const canvas = document.getElementById('gameCanvas');
-  if (canvas) {
-    canvas.width = GRID_WIDTH * CELL_SIZE;
-    canvas.height = GRID_HEIGHT * CELL_SIZE;
-  } else {
-    console.error('Canvas element #gameCanvas not found');
-    return;
-  }
-
-  // 初始化UI
-  ui = new UI('score', 'highScore', 'gameOver', 'restartButton');
-  const savedHigh = loadHighScore();
-  ui.updateHighScore(savedHigh);
-  ui.hideGameOver();
-  ui.setRestartHandler(() => {
-    stopGame();
-    startGame();
-  });
-
-  // 设置键盘输入，setupInput 返回 { cleanup } 对象，解构后直接保存清理函数
-  const { cleanup } = setupInput((direction) => {
-    if (game) {
-      game.setDirection(direction);
-    }
-  });
-  inputCleanup = cleanup;
-
-  // 启动循环
-  loopId = setInterval(gameLoop, GAME_SPEED);
-}
-
-/**
- * 停止当前游戏循环，清理监听器。
- */
-export function stopGame() {
-  if (loopId !== null) {
-    clearInterval(loopId);
-    loopId = null;
-  }
-  if (inputCleanup) {
-    inputCleanup();
-    inputCleanup = null;
-  }
-}
+export { startGame, stopGame, gameLoop };
